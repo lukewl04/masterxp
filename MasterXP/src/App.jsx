@@ -126,7 +126,7 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthenticated, auth0Id]);
 
-  // ---------------- Todos (via your Node API) ----------------
+  // ---------------- Todos  ----------------
   useEffect(() => {
     async function loadTodos() {
       if (!isAuthenticated) return;
@@ -466,29 +466,20 @@ function App() {
                           {todayTodos.map((todo) => (
                             <li
                               key={todo.id}
-                              className="list-group-item d-flex align-items-center gap-3 py-3"
+                              className="list-group-item d-flex align-items-center justify-content-between py-3"
                             >
-                              <input
-                                className="form-check-input mt-0"
-                                type="checkbox"
-                                checked={todo.completed}
-                                onChange={() => toggleTodo(todo.id)}
-                                aria-label={`Toggle ${todo.text}`}
-                                style={{ width: 20, height: 20 }}
-                              />
-
                               <div className="flex-grow-1">
                                 <div
-                                  className={`fw-semibold ${
+                                  className={`fw-semibold mb-1 ${
                                     todo.completed
-                                      ? 'text-decoration-line-through text-secondary'
-                                      : ''
+                                      ? "text-decoration-line-through text-secondary"
+                                      : "text-dark"
                                   }`}
                                 >
                                   {todo.text}
                                 </div>
 
-                                <div className="small text-secondary d-flex align-items-center gap-2">
+                                <div className="d-flex flex-wrap align-items-center gap-2 small text-secondary">
                                   {todo.xp_awarded ? (
                                     <span className="badge text-bg-success rounded-pill">
                                       +1 XP earned
@@ -500,21 +491,33 @@ function App() {
                                   )}
 
                                   {todo.completed && (
-                                    <span className="badge text-bg-light border text-secondary rounded-pill">
+                                    <span className="badge text-bg-light border rounded-pill">
                                       Completed
                                     </span>
                                   )}
                                 </div>
                               </div>
 
-                              <button
-                                type="button"
-                                className="btn btn-sm btn-outline-danger"
-                                onClick={() => deleteTodo(todo.id)}
-                              >
-                                Delete
-                              </button>
+                              <div className="d-flex align-items-center gap-3 ms-3">
+                                <input
+                                  className="form-check-input m-0"
+                                  type="checkbox"
+                                  checked={todo.completed}
+                                  onChange={() => toggleTodo(todo.id)}
+                                  aria-label={`Toggle ${todo.text}`}
+                                  style={{ width: 20, height: 20 }}
+                                />
+
+                                <button
+                                  type="button"
+                                  className="btn btn-sm btn-outline-danger"
+                                  onClick={() => deleteTodo(todo.id)}
+                                >
+                                  Delete
+                                </button>
+                              </div>
                             </li>
+
                           ))}
                         </ul>
                       )}
