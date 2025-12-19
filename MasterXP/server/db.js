@@ -1,49 +1,90 @@
-// server/db.js
-import Database from "better-sqlite3";
-import path from "path";
-import { fileURLToPath } from "url";
+import "dotenv/config";
+import { createClient } from "@supabase/supabase-js";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY // server only!
+);
 
-// DB file will be created as server/database.sqlite
-const dbPath = path.join(__dirname, "database.sqlite");
-const db = new Database(dbPath);
+// ---------- Users ----------
+export async function findUserByAuth0Id(auth0Id) {
+  const { data, error } = await supabase
+    .from("users")
+    .select("*")
+    .eq("auth0_id", auth0Id)
+    .maybeSingle();
 
-// Create users table if it doesn't exist
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    auth0_id TEXT UNIQUE NOT NULL,
-    xp INTEGER NOT NULL DEFAULT 0,
-    level INTEGER NOT NULL DEFAULT 1,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-  );
-`);
-
-export function findUserByAuth0Id(auth0Id) {
-  const stmt = db.prepare("SELECT * FROM users WHERE auth0_id = ?");
-  return stmt.get(auth0Id);
+  if (error) throw error;
+  return data;
 }
 
-export function createUser({ auth0Id, xp = 0, level = 1 }) {
-  const stmt = db.prepare(`
-    INSERT INTO users (auth0_id, xp, level)
-    VALUES (?, ?, ?)
-  `);
-  const info = stmt.run(auth0Id, xp, level);
-  const select = db.prepare("SELECT * FROM users WHERE id = ?");
-  return select.get(info.lastInsertRowid);
+export async function createUser({ auth0Id, xp, level }) {
+  const { data, error } = await supabase
+    .from("users")
+    .insert({ auth0_id: auth0Id, xp, level })
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
 }
 
-export function updateUserXP(auth0Id, xp, level) {
-  const stmt = db.prepare(`
-    UPDATE users
-    SET xp = ?, level = ?
-    WHERE auth0_id = ?
-  `);
-  stmt.run(xp, level, auth0Id);
+export async function updateUserXP(auth0Id, xp, level) {
+  const { data, error } = await supabase
+    .from("users")
+    .update({ xp, level })
+    .eq("auth0_id", auth0Id)
+    .select()
+    .single();
 
-  const select = db.prepare("SELECT * FROM users WHERE auth0_id = ?");
-  return select.get(auth0Id);
+  if (error) throw error;
+  return data;
+}
+
+// ---------- Todos ----------
+export async function listTodosByDate(auth0Id, dateStr) {
+  const { data, error } = await supabase
+    .from("todos")
+    .select("*")
+    .eq("auth0_id", auth0Id)
+    .eq("date", dateStr)
+    .order("created_at", { ascending: false });
+
+  if (error) throw error;
+  return data;
+}
+
+export async function createTodo(auth0Id, { text, date }) {
+  const { data, error } = await supabase
+    .from("todos")
+    .insert({ auth0_id: auth0Id, text, date })
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+export async function updateTodo(auth0Id, todoId, patch) {
+  const { data, error } = await supabase
+    .from("todos")
+    .update(patch)
+    .eq("id", todoId)
+    .eq("auth0_id", auth0Id)
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+export async function deleteTodo(auth0Id, todoId) {
+  const { error } = await supabase
+    .from("todos")
+    .delete()
+    .eq("id", todoId)
+    .eq("auth0_id", auth0Id);
+
+  if (error) throw error;
+  return true;
 }

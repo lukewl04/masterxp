@@ -7,8 +7,17 @@ function formatDate(date) {
   return date.toISOString().slice(0, 10);
 }
 
+const API_URL = 'http://localhost:3000';
+
 function App() {
-  const { isAuthenticated, isLoading, user, loginWithRedirect, logout } = useAuth0();
+  const {
+    isAuthenticated,
+    isLoading,
+    user,
+    loginWithRedirect,
+    logout,
+    getAccessTokenSilently,
+  } = useAuth0();
 
   // --- XP / Level state ---
   const [xp, setXp] = useState(0);
@@ -16,18 +25,17 @@ function App() {
   const [loadingXP, setLoadingXP] = useState(false);
   const [error, setError] = useState(null);
 
-  // --- Todo state (local-only) ---
+  // --- Todos state (SERVER-backed) ---
   const [todos, setTodos] = useState([]);
   const [input, setInput] = useState('');
 
   const auth0Id = user?.sub;
-
   const todayStr = useMemo(() => formatDate(new Date()), []);
 
-  const todayTodos = useMemo(
-    () => todos.filter((t) => t.date === todayStr),
-    [todos, todayStr]
-  );
+  const todayTodos = useMemo(() => {
+    // backend already filters by date, but keeping this is harmless
+    return todos.filter((t) => t.date === todayStr);
+  }, [todos, todayStr]);
 
   const completedCount = useMemo(
     () => todayTodos.filter((t) => t.completed).length,
@@ -42,7 +50,7 @@ function App() {
   const xpThisLevel = useMemo(() => xp % 100, [xp]);
   const xpToNext = useMemo(() => 100 - xpThisLevel, [xpThisLevel]);
 
-  // ---------------- XP + Supabase ----------------
+  // ---------------- XP (still via Supabase direct, unchanged) ----------------
   async function fetchOrCreateUser() {
     if (!auth0Id) return;
 
@@ -89,7 +97,6 @@ function App() {
         setLoadingXP(true);
         setError(null);
 
-        // Use functional update pattern to avoid stale xp issues
         const newXp = xp + amount;
         const newLevel = Math.floor(newXp / 100) + 1;
 
@@ -119,50 +126,138 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthenticated, auth0Id]);
 
-  // ---------------- Todos ----------------
-  function addTodo(e) {
+  // ---------------- Todos (via your Node API) ----------------
+  useEffect(() => {
+    async function loadTodos() {
+      if (!isAuthenticated) return;
+
+      try {
+        setError(null);
+        const token = await getAccessTokenSilently();
+        const res = await fetch(`${API_URL}/api/todos?date=${todayStr}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to load todos');
+
+        setTodos(data);
+      } catch (e) {
+        console.error(e);
+        setError(e.message || 'Failed to load todos');
+      }
+    }
+
+    loadTodos();
+  }, [isAuthenticated, todayStr, getAccessTokenSilently]);
+
+  async function addTodo(e) {
     e.preventDefault();
     const text = input.trim();
     if (!text) return;
 
-    const newTodo = {
-      id: crypto.randomUUID(),
-      text,
-      date: todayStr,
-      completed: false,
-      xpAwarded: false,
-      createdAt: Date.now(),
-    };
+    try {
+      setError(null);
+      const token = await getAccessTokenSilently();
+      const res = await fetch(`${API_URL}/api/todos`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ text, date: todayStr }),
+      });
 
-    setTodos((prev) => [newTodo, ...prev]);
-    setInput('');
+      const created = await res.json();
+      if (!res.ok) throw new Error(created.error || 'Failed to create todo');
+
+      setTodos((prev) => [created, ...prev]);
+      setInput('');
+    } catch (e) {
+      console.error(e);
+      setError(e.message || 'Failed to create todo');
+    }
   }
 
-  function toggleTodo(id) {
-    setTodos((prev) =>
-      prev.map((t) => {
-        if (t.id !== id) return t;
+  async function toggleTodo(id) {
+    const todo = todos.find((t) => t.id === id);
+    if (!todo) return;
 
-        const nowCompleted = !t.completed;
+    const nowCompleted = !todo.completed;
+    const willAward = nowCompleted && !todo.xp_awarded;
 
-        // Award 1 XP only the first time it becomes completed
-        if (nowCompleted && !t.xpAwarded) {
-          gainXp(1);
-          return { ...t, completed: true, xpAwarded: true };
-        }
+    try {
+      setError(null);
+      const token = await getAccessTokenSilently();
+      const res = await fetch(`${API_URL}/api/todos/${id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          completed: nowCompleted,
+          xp_awarded: todo.xp_awarded || willAward,
+        }),
+      });
 
-        // Allow unchecking without removing XP
-        return { ...t, completed: nowCompleted };
-      })
-    );
+      const updated = await res.json();
+      if (!res.ok) throw new Error(updated.error || 'Failed to update todo');
+
+      // award XP only the first time it becomes completed
+      if (willAward) gainXp(1);
+
+      setTodos((prev) => prev.map((t) => (t.id === id ? updated : t)));
+    } catch (e) {
+      console.error(e);
+      setError(e.message || 'Failed to update todo');
+    }
   }
 
-  function deleteTodo(id) {
-    setTodos((prev) => prev.filter((t) => t.id !== id));
+  async function deleteTodo(id) {
+    try {
+      setError(null);
+      const token = await getAccessTokenSilently();
+      const res = await fetch(`${API_URL}/api/todos/${id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to delete todo');
+
+      setTodos((prev) => prev.filter((t) => t.id !== id));
+    } catch (e) {
+      console.error(e);
+      setError(e.message || 'Failed to delete todo');
+    }
   }
 
-  function clearCompleted() {
-    setTodos((prev) => prev.filter((t) => !(t.date === todayStr && t.completed)));
+  async function clearCompleted() {
+    // delete completed todos for today (one by one)
+    const completed = todayTodos.filter((t) => t.completed);
+    if (completed.length === 0) return;
+
+    try {
+      setError(null);
+      const token = await getAccessTokenSilently();
+
+      await Promise.all(
+        completed.map(async (t) => {
+          const res = await fetch(`${API_URL}/api/todos/${t.id}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || 'Failed to clear completed');
+        })
+      );
+
+      setTodos((prev) => prev.filter((t) => !(t.date === todayStr && t.completed)));
+    } catch (e) {
+      console.error(e);
+      setError(e.message || 'Failed to clear completed');
+    }
   }
 
   // ---------------- UI helpers ----------------
@@ -223,7 +318,10 @@ function App() {
                   <p className="text-secondary mb-4">
                     Log in to track XP and level up by completing tasks.
                   </p>
-                  <button className="btn btn-primary btn-lg" onClick={() => loginWithRedirect()}>
+                  <button
+                    className="btn btn-primary btn-lg"
+                    onClick={() => loginWithRedirect()}
+                  >
                     Continue with Auth0
                   </button>
                   <div className="mt-4 text-secondary small">
@@ -288,8 +386,9 @@ function App() {
                     </div>
 
                     <div className="mt-3 small text-secondary">
-                      Tip: checking a task for the first time gives <span className="fw-semibold text-dark">+1 XP</span>.
-                      Unchecking won’t remove XP.
+                      Tip: checking a task for the first time gives{' '}
+                      <span className="fw-semibold text-dark">+1 XP</span>. Unchecking won’t
+                      remove XP.
                     </div>
                   </div>
                 </div>
@@ -350,9 +449,7 @@ function App() {
                           Add
                         </button>
                       </div>
-                      <div className="form-text">
-                        Keep them small. Stack XP fast.
-                      </div>
+                      <div className="form-text">Keep them small. Stack XP fast.</div>
                     </form>
 
                     <div className="mt-4">
@@ -383,14 +480,16 @@ function App() {
                               <div className="flex-grow-1">
                                 <div
                                   className={`fw-semibold ${
-                                    todo.completed ? 'text-decoration-line-through text-secondary' : ''
+                                    todo.completed
+                                      ? 'text-decoration-line-through text-secondary'
+                                      : ''
                                   }`}
                                 >
                                   {todo.text}
                                 </div>
 
                                 <div className="small text-secondary d-flex align-items-center gap-2">
-                                  {todo.xpAwarded ? (
+                                  {todo.xp_awarded ? (
                                     <span className="badge text-bg-success rounded-pill">
                                       +1 XP earned
                                     </span>
@@ -424,7 +523,8 @@ function App() {
                 </div>
 
                 <div className="mt-3 text-secondary small">
-                  Complete a task = <span className="fw-semibold text-dark">+1 XP</span>. Level up every 100 XP.
+                  Complete a task = <span className="fw-semibold text-dark">+1 XP</span>. Level
+                  up every 100 XP.
                 </div>
               </div>
             </div>
